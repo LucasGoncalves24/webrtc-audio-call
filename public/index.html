@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Chamada de Voz com WebRTC</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+    button { font-size: 18px; padding: 10px 20px; }
+    #status { margin-top: 20px; font-weight: bold; color: #444; }
+    #status.connected { color: green; }
+    #status.error { color: red; }
+  </style>
+</head>
+<body>
+  <h1>Chamada de Voz</h1>
+  <button id="startCall">Ligar</button>
+  <div id="status">Aguardando...</div>
+  <audio id="remoteAudio" autoplay></audio>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const startCallBtn = document.getElementById("startCall");
+    const remoteAudio = document.getElementById("remoteAudio");
+    const status = document.getElementById("status");
+
+    const peer = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" }
+      ]
+    });
+
+    let localStream = null;
+
+    function setStatus(msg, type = "") {
+      status.textContent = msg;
+      status.className = type;
+    }
+
+    async function startMedia() {
+      try {
+        setStatus("Aguardando microfone...");
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+        setStatus("Microfone ativado.");
+      } catch (e) {
+        setStatus("Erro ao acessar microfone!", "error");
+        console.error("Erro no getUserMedia:", e);
+      }
+    }
+
+    peer.ontrack = event => {
+      setStatus("Recebendo áudio...");
+      remoteAudio.srcObject = event.streams[0];
+    };
+
+    peer.onicecandidate = event => {
+      if (event.candidate) {
+        socket.emit("candidate", event.candidate);
+      }
+    };
+
+    socket.on("offer", async (offer) => {
+      setStatus("Recebendo oferta...");
+      await peer.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      socket.emit("answer", answer);
+      setStatus("Conectado!", "connected");
+    });
+
+    socket.on("answer", async (answer) => {
+      setStatus("Ligação estabelecida!", "connected");
+      await peer.setRemoteDescription(new RTCSessionDescription(answer));
+    });
+
+    socket.on("candidate", async (candidate) => {
+      try {
+        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.error("Erro ao adicionar ICE Candidate:", e);
+      }
+    });
+
+    startCallBtn.onclick = async () => {
+      startCallBtn.disabled = true;
+      setStatus("Iniciando chamada...");
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      socket.emit("offer", offer);
+    };
+
+    // Iniciar microfone automaticamente ao abrir a página
+    startMedia();
+  </script>
+</body>
+</html>
